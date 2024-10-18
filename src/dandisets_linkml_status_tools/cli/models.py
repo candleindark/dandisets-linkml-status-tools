@@ -5,7 +5,7 @@ from typing import Annotated, Any, Union
 from dandi.dandiapi import VersionStatus
 from jsonschema.exceptions import ValidationError
 from linkml.validator.report import ValidationResult
-from pydantic import BaseModel, Json, PlainSerializer, TypeAdapter
+from pydantic import AfterValidator, BaseModel, Json, PlainSerializer, TypeAdapter
 from typing_extensions import TypedDict  # Required for Python < 3.12 by Pydantic
 
 
@@ -34,6 +34,32 @@ PolishedValidationResult = TypedDict(
     "PolishedValidationResult",
     field_annotations,
 )
+
+
+def check_source_jsonschema_validation_error(
+    results: list[ValidationResult],
+) -> list[ValidationResult]:
+    """
+    Check if the `source` field of each `ValidationResult` object in a given list is a
+    `jsonschema.exceptions.ValidationError` object.
+
+    :param results: The list of `ValidationResult` objects to be checked.
+
+    :return: The list of `ValidationResult` objects if all `source` fields are
+        `jsonschema.exceptions.ValidationError` objects.
+
+    :raises ValueError: If the `source` field of a `ValidationResult` object is not a
+        `jsonschema.exceptions.ValidationError` object.
+    """
+    for result in results:
+        result_source = result.source
+        if not isinstance(result_source, ValidationError):
+            msg = (
+                f"Expected `source` field of a `ValidationResult` object to be "
+                f"a {ValidationError!r} object, but got {result_source!r}"
+            )
+            raise ValueError(msg)  # noqa: TRY004
+    return results
 
 
 def polish_validation_results(
@@ -65,12 +91,6 @@ def polish_validation_results(
 
         # Include the `source` field as a `JsonValidationErrorView` object
         result_source = result.source
-        if not isinstance(result_source, ValidationError):
-            msg = (
-                f"Expected `source` field of a `ValidationResult` object to be "
-                f"a {ValidationError!r} object, but got {result_source!r}"
-            )
-            raise ValueError(msg)  # noqa: TRY004
         # noinspection PyTypeChecker
         result_as_dict["source"] = JsonValidationErrorView(
             message=result_source.message,
@@ -87,7 +107,9 @@ def polish_validation_results(
 DandisetMetadataType = dict[str, Any]
 PydanticValidationErrsType = list[dict[str, Any]]
 LinkmlValidationErrsType = Annotated[
-    list[ValidationResult], PlainSerializer(polish_validation_results)
+    list[ValidationResult],
+    AfterValidator(check_source_jsonschema_validation_error),
+    PlainSerializer(polish_validation_results),
 ]
 
 dandiset_metadata_adapter = TypeAdapter(DandisetMetadataType)
